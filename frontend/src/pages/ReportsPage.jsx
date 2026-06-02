@@ -12,8 +12,10 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [uploadMode, setUploadMode] = useState('file'); // 'file' or 'url'
   const [form, setForm] = useState({ patient_id: '', report_type: '', description: '' });
   const [file, setFile] = useState(null);
+  const [fileUrl, setFileUrl] = useState('');
   const [error, setError] = useState('');
   const fileRef = useRef();
 
@@ -28,19 +30,31 @@ export default function ReportsPage() {
 
   const handleUpload = async (e) => {
     e.preventDefault();
-    if (!file) return setError('Please select a file.');
+    if (uploadMode === 'file' && !file) return setError('Please select a file.');
+    if (uploadMode === 'url' && !fileUrl.trim()) return setError('Please enter a URL.');
     setError(''); setUploading(true);
     try {
-      const fd = new FormData();
-      fd.append('file', file);
-      fd.append('patient_id', form.patient_id);
-      fd.append('report_type', form.report_type);
-      fd.append('description', form.description);
-      const res = await api.post('/reports/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      let res;
+      if (uploadMode === 'file') {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('patient_id', form.patient_id);
+        fd.append('report_type', form.report_type);
+        fd.append('description', form.description);
+        res = await api.post('/reports/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      } else {
+        res = await api.post('/reports/upload-url', {
+          patient_id: form.patient_id,
+          report_type: form.report_type,
+          description: form.description,
+          file_url: fileUrl.trim()
+        });
+      }
       setReports(prev => [res.data, ...prev]);
       setShowForm(false);
       setForm({ patient_id: '', report_type: '', description: '' });
       setFile(null);
+      setFileUrl('');
     } catch (err) {
       setError(err.response?.data?.error || 'Upload failed.');
     } finally { setUploading(false); }
@@ -95,24 +109,68 @@ export default function ReportsPage() {
                     placeholder="Brief description of findings..."
                     className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 bg-slate-50" />
                 </div>
+
+                {/* Upload Mode Toggle */}
                 <div className="sm:col-span-2">
-                  <label className="block text-sm font-medium text-slate-700 mb-1.5">File (PDF or Image, max 10MB)</label>
-                  <div
-                    className="border-2 border-dashed border-slate-200 hover:border-teal-400 rounded-xl p-6 text-center cursor-pointer transition-colors"
-                    onClick={() => fileRef.current.click()}>
-                    {file ? (
-                      <p className="text-sm text-teal-600 font-medium">✓ {file.name}</p>
-                    ) : (
-                      <div>
-                        <p className="text-3xl mb-2">📁</p>
-                        <p className="text-slate-500 text-sm">Click to select file</p>
-                        <p className="text-slate-400 text-xs mt-1">PDF, JPG, PNG supported</p>
-                      </div>
-                    )}
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Upload Method</label>
+                  <div className="flex gap-2 mb-3">
+                    <button type="button" onClick={() => { setUploadMode('file'); setFileUrl(''); setError(''); }}
+                      className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-semibold border-2 transition-all duration-200 ${
+                        uploadMode === 'file'
+                          ? 'bg-teal-50 border-teal-500 text-teal-700 shadow-sm'
+                          : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300'
+                      }`}>
+                      📁 Upload File
+                    </button>
+                    <button type="button" onClick={() => { setUploadMode('url'); setFile(null); setError(''); }}
+                      className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-semibold border-2 transition-all duration-200 ${
+                        uploadMode === 'url'
+                          ? 'bg-teal-50 border-teal-500 text-teal-700 shadow-sm'
+                          : 'bg-slate-50 border-slate-200 text-slate-500 hover:border-slate-300'
+                      }`}>
+                      🔗 Paste URL
+                    </button>
                   </div>
-                  <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
-                    onChange={e => setFile(e.target.files[0])} />
                 </div>
+
+                {/* File Upload Mode */}
+                {uploadMode === 'file' && (
+                  <div className="sm:col-span-2">
+                    <div
+                      className="border-2 border-dashed border-slate-200 hover:border-teal-400 rounded-xl p-6 text-center cursor-pointer transition-colors"
+                      onClick={() => fileRef.current.click()}>
+                      {file ? (
+                        <p className="text-sm text-teal-600 font-medium">✓ {file.name}</p>
+                      ) : (
+                        <div>
+                          <p className="text-3xl mb-2">📁</p>
+                          <p className="text-slate-500 text-sm">Click to select file</p>
+                          <p className="text-slate-400 text-xs mt-1">PDF, JPG, PNG supported</p>
+                        </div>
+                      )}
+                    </div>
+                    <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
+                      onChange={e => setFile(e.target.files[0])} />
+                  </div>
+                )}
+
+                {/* URL Input Mode */}
+                {uploadMode === 'url' && (
+                  <div className="sm:col-span-2">
+                    <div className="border-2 border-dashed border-slate-200 hover:border-teal-400 rounded-xl p-4 transition-colors">
+                      <div className="flex items-center gap-3">
+                        <span className="text-2xl">🔗</span>
+                        <input type="url" value={fileUrl} onChange={e => setFileUrl(e.target.value)}
+                          placeholder="https://example.com/report.pdf"
+                          className="flex-1 px-4 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white" />
+                      </div>
+                      <p className="text-slate-400 text-xs mt-2 ml-10">Enter a direct link to a PDF or image file (.pdf, .jpg, .jpeg, .png)</p>
+                      {fileUrl && (
+                        <p className="text-xs text-teal-600 font-medium mt-2 ml-10 truncate">✓ {fileUrl}</p>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
               {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-xl">{error}</div>}
               <button type="submit" disabled={uploading}
@@ -154,7 +212,9 @@ export default function ReportsPage() {
                         <div className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center text-amber-600 text-sm shrink-0">📋</div>
                         <div>
                           <p className="text-sm font-medium text-slate-800">{r.report_type}</p>
-                          <p className="text-xs text-slate-400 truncate max-w-[160px]">{r.file_name}</p>
+                          <p className="text-xs text-slate-400 truncate max-w-[160px]">
+                            {r.file_url?.startsWith('http') ? '🔗 ' : ''}{r.file_name}
+                          </p>
                           <p className="text-xs text-slate-400">{new Date(r.created_at).toLocaleDateString('en-IN')}</p>
                         </div>
                       </div>
@@ -168,9 +228,9 @@ export default function ReportsPage() {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2">
-                        <a href={r.file_url} target="_blank" rel="noreferrer"
+                        <a href={r.file_url?.startsWith('http') ? r.file_url : r.file_url} target="_blank" rel="noreferrer"
                           className="text-xs bg-teal-50 text-teal-700 hover:bg-teal-100 px-3 py-1.5 rounded-lg font-medium transition-colors">
-                          Open
+                          {r.file_url?.startsWith('http') ? 'Open Link' : 'Open'}
                         </a>
                         {user.role === 'doctor' && (
                           <button onClick={() => handleDelete(r.id)}

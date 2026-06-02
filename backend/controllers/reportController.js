@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { URL } = require('url');
 const pool = require('../config/db');
 
 const generateFileHash = (filePath, metadata) => {
@@ -100,6 +101,71 @@ const hash = generateFileHash(filePath, {
   }
 };
 
+// POST /api/reports/upload-url — Upload report via URL (doctor only)
+const uploadReportFromUrl = async (req, res) => {
+  const { patient_id, report_type, description, file_url } = req.body;
+
+  if (!patient_id || !report_type || !file_url) {
+    return res.status(400).json({ error: 'Patient ID, report type, and file URL are required.' });
+  }
+
+  // Validate the URL format
+  try {
+    new URL(file_url);
+  } catch (_) {
+    return res.status(400).json({ error: 'Invalid URL format. Please provide a valid URL.' });
+  }
+
+  // Validate URL points to an allowed file type
+  const urlPath = file_url.split('?')[0].toLowerCase();
+  const allowedExtensions = ['.pdf', '.jpg', '.jpeg', '.png'];
+  const hasValidExtension = allowedExtensions.some(ext => urlPath.endsWith(ext));
+  if (!hasValidExtension) {
+    return res.status(400).json({ error: 'URL must point to a PDF or image file (.pdf, .jpg, .jpeg, .png).' });
+  }
+
+  try {
+    const docResult = await pool.query('SELECT id FROM doctors WHERE user_id = $1', [req.user.id]);
+    if (!docResult.rows[0]) return res.status(404).json({ error: 'Doctor not found.' });
+    const doctorId = docResult.rows[0].id;
+
+    // Check patient belongs to doctor
+    const patCheck = await pool.query(
+      'SELECT id FROM patients WHERE id = $1 AND doctor_id = $2',
+      [patient_id, doctorId]
+    );
+    if (patCheck.rows.length === 0) {
+      return res.status(403).json({ error: 'Patient not assigned to you.' });
+    }
+
+    // Generate hash from URL + metadata (since file is external)
+    const hash = crypto
+      .createHash('sha256')
+      .update(file_url)
+      .update(JSON.stringify({
+        patient_id,
+        doctor_id: doctorId,
+        report_type,
+        timestamp: null
+      }))
+      .digest('hex');
+
+    // Extract filename from URL
+    const urlParts = file_url.split('/');
+    const fileName = decodeURIComponent(urlParts[urlParts.length - 1].split('?')[0]) || 'external-report';
+
+    const result = await pool.query(`
+      INSERT INTO reports (patient_id, doctor_id, report_type, file_url, file_name, description, hash)
+      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *
+    `, [patient_id, doctorId, report_type, file_url, fileName, description, hash]);
+
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error('uploadReportFromUrl error:', err);
+    res.status(500).json({ error: 'Server error.' });
+  }
+};
+
 // GET /api/reports/:id
 const getReportById = async (req, res) => {
   const { id } = req.params;
@@ -163,4 +229,4 @@ const deleteReport = async (req, res) => {
   }
 };
 
-module.exports = { getReports, uploadReport, getReportById, getPatientReports, deleteReport };
+module.exports = { getReports, uploadReport, uploadReportFromUrl, getReportById, getPatientReports, deleteReport };
